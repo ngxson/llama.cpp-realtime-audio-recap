@@ -32,10 +32,10 @@ const DEFAULT_SETTINGS = {
   llmModel: 'local',
   apiKey: '',
   chunkSeconds: 10,
-  chunkOverlapMs: 500,
-  windowChunks: 3,           // audio window: chunks sent as audio in each call
+  chunkOverlapMs: 1000,
+  windowChunks: 2,           // audio window: chunks sent as audio in each call
   recapWindow: 8,            // recap window: prior chunks whose bullets/transcripts are sent as text context
-  maxRecapBullets: 10,       // hard cap on the recap's bullet count — prompt asks the model to compress when exceeded
+  maxRecapBullets: 5,        // hard cap on the recap's bullet count — prompt asks the model to compress when exceeded
   recapLanguage: 'English',
   systemPrompt:
     "⚠ HARD LIMIT: the recap must contain AT MOST {{MAX_BULLETS}} bullets at all " +
@@ -479,6 +479,14 @@ createApp({
         // is delivered in the final user turn below so the model doesn't think
         // it has to reproduce per-chunk bullets.
         messages.push({ role: 'assistant', content: c.transcript || '[silence]' });
+      }
+
+      if (priorAudio.length > 0) {
+        messages.push({
+          role: 'user',
+          content: 'Above are past audio segments. Below is the new audio with a small overlap:',
+        });
+        messages.push({ role: 'assistant', content: 'Understood.' });
       }
 
       let userText = '';
