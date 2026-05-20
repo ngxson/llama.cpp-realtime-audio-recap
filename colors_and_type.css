@@ -1,0 +1,169 @@
+/* ==========================================================================
+   Hugging Face — Colors & Type
+   Sourced from the official HF brand (chunte-hfba) and huggingface.co.
+   ========================================================================== */
+
+:root {
+  /* ---------- Brand core ---------- */
+  --hf-yellow:        #FFD21E;  /* The mascot yellow; primary surface accent */
+  --hf-yellow-deep:   #FFBD59;  /* Shadow side of the face */
+  --hf-orange:        #FF9D00;  /* Secondary warm accent, crescent shadow */
+  --hf-orange-soft:   #FFAD05;
+  --hf-blue:          #496EF0;  /* Electric blue — wordmark, outlines */
+  --hf-blue-deep:     #353E60;  /* Dark blue for body text on warm bgs */
+  --hf-red:           #DB3328;  /* Mascot mouth / accent */
+  --hf-green:         #009B3A;
+  --hf-purple:        #9747FF;  /* Secondary accent (used on wordmark frames) */
+
+  /* Rainbow logo gradient stops (ordered) */
+  --hf-rainbow-1: #FFD21E;
+  --hf-rainbow-2: #FF9D00;
+  --hf-rainbow-3: #DB3328;
+  --hf-rainbow-4: #9747FF;
+  --hf-rainbow-5: #496EF0;
+  --hf-rainbow-6: #009B3A;
+
+  /* ---------- Neutrals (from huggingface.co) ---------- */
+  --hf-black:         #000000;
+  --hf-gray-900:      #1B1B1D;
+  --hf-gray-800:      #32343D;
+  --hf-gray-700:      #475169;  /* Sidebar text */
+  --hf-gray-600:      #6A768F;  /* Secondary text */
+  --hf-gray-500:      #9BA3AF;
+  --hf-gray-400:      #D1D5DB;
+  --hf-gray-300:      #E5E7EB;
+  --hf-gray-200:      #EEEFF2;  /* Subtle border */
+  --hf-gray-100:      #F5F6F8;  /* Page background */
+  --hf-gray-50:       #FAFAFA;
+  --hf-white:         #FFFFFF;
+
+  /* ---------- Warm brand backgrounds ---------- */
+  --hf-cream:         #FFF8DE;  /* Soft yellow card bg */
+  --hf-cream-deep:    #FFF2C5;
+  --hf-paper:         #FFF0B4;
+
+  /* ---------- Semantic (UI surfaces on huggingface.co) ---------- */
+  --fg-1:             var(--hf-gray-900);   /* Primary body copy */
+  --fg-2:             var(--hf-gray-700);   /* Secondary body copy */
+  --fg-3:             var(--hf-gray-600);   /* Muted / meta */
+  --fg-inverse:       var(--hf-white);
+  --fg-link:          var(--hf-blue);
+  --fg-accent:        var(--hf-blue);
+
+  --bg-1:             var(--hf-white);       /* Card surface */
+  --bg-2:             var(--hf-gray-100);    /* Page background */
+  --bg-3:             var(--hf-gray-200);    /* Inset surface */
+  --bg-brand:         var(--hf-yellow);
+  --bg-brand-soft:    var(--hf-cream);
+  --bg-invert:        var(--hf-gray-900);
+
+  --border-1:         var(--hf-gray-200);
+  --border-2:         var(--hf-gray-300);
+  --border-strong:    var(--hf-gray-800);
+
+  /* Pill / product chips seen throughout hf.co */
+  --tag-models-fg:    #B45309;   /* amber-700 */
+  --tag-models-bg:    #FEF3C7;
+  --tag-datasets-fg:  #1D4ED8;   /* blue-700 */
+  --tag-datasets-bg:  #DBEAFE;
+  --tag-spaces-fg:    #7E22CE;   /* purple-700 */
+  --tag-spaces-bg:    #F3E8FF;
+  --tag-papers-fg:    #047857;   /* emerald-700 */
+  --tag-papers-bg:    #D1FAE5;
+  --tag-posts-fg:     #BE185D;   /* pink-700 */
+  --tag-posts-bg:     #FCE7F3;
+
+  /* ---------- Radius ---------- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;   /* hf.co default control radius */
+  --radius-lg: 12px;  /* Cards */
+  --radius-xl: 16px;
+  --radius-2xl: 24px; /* Brand poster frames */
+  --radius-pill: 999px;
+
+  /* ---------- Elevation ---------- */
+  --shadow-xs: 0 1px 1px rgba(27, 27, 29, 0.04);
+  --shadow-sm: 0 1px 2px rgba(27, 27, 29, 0.06), 0 1px 3px rgba(27, 27, 29, 0.08);
+  --shadow-md: 0 4px 10px rgba(27, 27, 29, 0.06), 0 2px 4px rgba(27, 27, 29, 0.06);
+  --shadow-lg: 0 12px 24px rgba(27, 27, 29, 0.08), 0 4px 8px rgba(27, 27, 29, 0.04);
+  --shadow-brand: 0 10px 30px rgba(73, 110, 240, 0.20);
+
+  /* ---------- Spacing (4-pt base, consistent with tailwind hf uses) ---------- */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-24: 96px;
+
+  /* ---------- Typography ----------
+     hf.co uses "Source Sans 3" (successor to Source Sans Pro) for UI,
+     IBM Plex Mono for code/tags, and a heavy slanted display face
+     (Hugging Face wordmark proper) for marketing. Substitution: we use
+     Source Sans 3 + IBM Plex Mono from Google Fonts; the display slanted
+     wordmark is used only via the supplied SVG.
+  */
+  --font-sans: "Source Sans 3", "Source Sans Pro", ui-sans-serif, system-ui,
+               -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+               "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+               Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-display: "Source Sans 3", var(--font-sans); /* For big headings */
+
+  /* Type scale — matches hf.co docs + marketing pages */
+  --fs-xs:   12px; --lh-xs:   16px;
+  --fs-sm:   14px; --lh-sm:   20px;
+  --fs-base: 16px; --lh-base: 24px;
+  --fs-md:   18px; --lh-md:   28px;
+  --fs-lg:   20px; --lh-lg:   28px;
+  --fs-xl:   24px; --lh-xl:   32px;
+  --fs-2xl:  30px; --lh-2xl:  36px;
+  --fs-3xl:  36px; --lh-3xl:  44px;
+  --fs-4xl:  48px; --lh-4xl:  56px;
+  --fs-5xl:  60px; --lh-5xl:  68px;
+  --fs-6xl:  80px; --lh-6xl:  88px;
+
+  --fw-regular: 400;
+  --fw-medium:  500;
+  --fw-semibold: 600;
+  --fw-bold:    700;
+  --fw-black:   900;
+
+  /* ---------- Motion ---------- */
+  --ease-out: cubic-bezier(.16,1,.3,1);
+  --ease-spring: cubic-bezier(.34,1.56,.64,1);
+  --t-quick: 120ms;
+  --t-base:  200ms;
+  --t-slow:  360ms;
+}
+
+/* ==========================================================================
+   Semantic element styles. Include with:  <link rel="stylesheet" href="colors_and_type.css">
+   ========================================================================== */
+html, body { font-family: var(--font-sans); color: var(--fg-1); background: var(--bg-2); -webkit-font-smoothing: antialiased; }
+
+h1, .h1 { font-family: var(--font-display); font-size: var(--fs-5xl); line-height: var(--lh-5xl); font-weight: var(--fw-bold); letter-spacing: -0.02em; color: var(--fg-1); }
+h2, .h2 { font-family: var(--font-display); font-size: var(--fs-3xl); line-height: var(--lh-3xl); font-weight: var(--fw-bold); letter-spacing: -0.01em; color: var(--fg-1); }
+h3, .h3 { font-family: var(--font-sans);    font-size: var(--fs-2xl); line-height: var(--lh-2xl); font-weight: var(--fw-semibold); color: var(--fg-1); }
+h4, .h4 { font-family: var(--font-sans);    font-size: var(--fs-xl);  line-height: var(--lh-xl);  font-weight: var(--fw-semibold); color: var(--fg-1); }
+h5, .h5 { font-family: var(--font-sans);    font-size: var(--fs-lg);  line-height: var(--lh-lg);  font-weight: var(--fw-semibold); color: var(--fg-1); }
+h6, .h6 { font-family: var(--font-sans);    font-size: var(--fs-md);  line-height: var(--lh-md);  font-weight: var(--fw-semibold); color: var(--fg-1); }
+
+p, .p   { font-size: var(--fs-base); line-height: var(--lh-base); color: var(--fg-1); }
+.small  { font-size: var(--fs-sm);   line-height: var(--lh-sm);   color: var(--fg-2); }
+.meta   { font-size: var(--fs-xs);   line-height: var(--lh-xs);   color: var(--fg-3); }
+
+code, kbd, pre, .mono { font-family: var(--font-mono); font-size: .92em; }
+code { background: var(--bg-3); border-radius: var(--radius-xs); padding: 2px 6px; }
+pre  { background: var(--hf-gray-900); color: var(--hf-gray-100); border-radius: var(--radius-md); padding: var(--space-4); overflow: auto; }
+
+a { color: var(--fg-link); text-decoration: underline; text-underline-offset: 3px; }
+a:hover { opacity: .8; }
+
+hr { border: 0; border-top: 1px solid var(--border-1); }
