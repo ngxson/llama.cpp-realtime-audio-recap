@@ -189,7 +189,10 @@
                 :key="c.id"
                 class="transcript-line"
                 :class="{ pending: c.status === 'pending' || (c.status === 'streaming' && !c.transcript) }"
-              ><span class="transcript-time time-hover" :title="formatWallTime(c.createdAt)">{{ formatTime(c.time) }}</span>{{ c.transcript || (c.status === 'pending' ? '…' : c.status === 'streaming' ? '…' : '') }}</div>
+              ><span class="transcript-time time-hover"
+                  @mouseenter="showTooltip($event, chunkTooltipText(c))"
+                  @mousemove="moveTooltip($event)"
+                  @mouseleave="hideTooltip()">{{ formatTime(c.time) }}</span>{{ c.transcript || (c.status === 'pending' ? '…' : c.status === 'streaming' ? '…' : '') }}</div>
             </template>
           </div>
         </div>
@@ -200,7 +203,10 @@
             <div class="pane-title">
               Running recap
               <span class="lang-pill">{{ settings.recapLanguage }}</span>
-              <span v-if="liveRecapUpdatedAt !== null" class="lang-pill subtle time-hover" :title="formatWallTime(liveRecapUpdatedWallTime)">updated {{ formatTime(liveRecapUpdatedAt) }}</span>
+              <span v-if="liveRecapUpdatedAt !== null" class="lang-pill subtle time-hover"
+                @mouseenter="showTooltip($event, formatWallTime(liveRecapUpdatedWallTime))"
+                @mousemove="moveTooltip($event)"
+                @mouseleave="hideTooltip()">updated {{ formatTime(liveRecapUpdatedAt) }}</span>
             </div>
             <div class="pane-actions">
               <button class="btn ghost" :disabled="!liveRecap.length" @click="copyRecap">Copy</button>
@@ -218,9 +224,11 @@
                 :key="c.id"
                 class="recap-item"
                 :class="{ streaming: c.status === 'streaming', historic: c.id !== latestRecapChunkId }"
-                :title="c.id !== latestRecapChunkId ? 'Earlier snapshot at ' + formatTime(c.time) + ' (' + formatWallTime(c.createdAt) + ') — hover for full opacity' : 'Current snapshot at ' + formatTime(c.time) + ' (' + formatWallTime(c.createdAt) + ')'"
               >
-                <div class="recap-time time-hover" :title="formatWallTime(c.createdAt)">{{ formatTime(c.time) }}</div>
+                <div class="recap-time time-hover"
+                  @mouseenter="showTooltip($event, chunkTooltipText(c))"
+                  @mousemove="moveTooltip($event)"
+                  @mouseleave="hideTooltip()">{{ formatTime(c.time) }}</div>
                 <div class="recap-bullets">
                   <div v-for="(b, i) in c.bullets" :key="i" class="recap-bullet"><template v-for="(seg, j) in renderBullet(b)" :key="j"><strong v-if="seg.b">{{ seg.t }}</strong><template v-else>{{ seg.t }}</template></template></div>
                 </div>
@@ -273,6 +281,27 @@
                 <input type="password" v-model="settings.apiKey" :disabled="settings.mockMode" placeholder="leave blank for local servers">
               </div>
             </div>
+            <div class="field-row" style="margin-top: var(--space-3);">
+              <div class="field">
+                <label>Temperature</label>
+                <input type="number" min="0" max="2" step="0.05" v-model.number="settings.temperature" :disabled="settings.mockMode">
+              </div>
+              <div class="field">
+                <label>Top-K</label>
+                <input type="number" min="0" max="500" step="1" v-model.number="settings.topK" :disabled="settings.mockMode">
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="section-heading">Microphone</div>
+            <div class="toggle-row">
+              <div class="info">
+                <span class="t">Echo cancellation</span>
+                <span class="d">Disable when recording a meeting — the meeting app already handles echo, and this can muffle the speaker's voice.</span>
+              </div>
+              <input type="checkbox" class="switch" v-model="settings.echoCancellation">
+            </div>
           </div>
 
           <div>
@@ -301,14 +330,18 @@
                 <input type="number" min="1" max="20" step="1" v-model.number="settings.windowChunks">
               </div>
               <div class="field">
-                <label>Recap window <span class="hint">— prior chunks as text context</span></label>
-                <input type="number" min="1" max="50" step="1" v-model.number="settings.recapWindow">
+                <label>Text transcripts <span class="hint">— prior chunks as plain text</span></label>
+                <input type="number" min="0" max="50" step="1" v-model.number="settings.textChunks">
+              </div>
+              <div class="field">
+                <label>Recap snapshots <span class="hint">— even older chunks as bullet context</span></label>
+                <input type="number" min="0" max="50" step="1" v-model.number="settings.recapWindow">
               </div>
             </div>
             <p class="hint" style="margin: var(--space-2) 0 0; color: var(--fg-3); font-size: var(--fs-xs);">
-              On each request we send the last <strong>{{ settings.windowChunks }}</strong> chunks as audio (expensive but high-fidelity)
-              plus the last <strong>{{ settings.recapWindow }}</strong> chunks' transcripts &amp; bullets as text (cheap, keeps long memory).
-              Set audio low and recap high for fast responses.
+              Per request: <strong>{{ settings.windowChunks }}</strong> audio chunk(s), preceded by
+              <strong>{{ settings.textChunks }}</strong> transcript(s) as text, preceded by
+              <strong>{{ settings.recapWindow }}</strong> recap bullet snapshot(s) as compact context.
             </p>
           </div>
 
@@ -355,6 +388,9 @@
 
     <!-- ====== Toast ====== -->
     <div v-if="toast" class="toast">{{ toast }}</div>
+
+    <!-- ====== Tooltip ====== -->
+    <div v-if="tooltip.visible" class="app-tooltip" :style="{ top: tooltip.y + 'px', left: tooltip.x + 'px' }">{{ tooltip.text }}</div>
   </div>
 </script>
 

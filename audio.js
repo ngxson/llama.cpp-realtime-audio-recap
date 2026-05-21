@@ -26,8 +26,9 @@
    ========================================================================== */
 
 class ContinuousCapture {
-  constructor({ sampleRate = 16000, chunkSeconds = 10, overlapMs = 0, onChunk, onLevel, onError } = {}) {
+  constructor({ sampleRate = 16000, chunkSeconds = 10, overlapMs = 0, echoCancellation = true, onChunk, onLevel, onError } = {}) {
     this.sampleRate = sampleRate;
+    this._echoCancellation = echoCancellation;
     this._chunkSeconds = Math.max(1, chunkSeconds);
     this._overlapMs = Math.max(0, overlapMs);
     this.onChunk = onChunk || (() => {});
@@ -52,7 +53,7 @@ class ContinuousCapture {
 
   async start() {
     this._stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      audio: { echoCancellation: this._echoCancellation, noiseSuppression: true, autoGainControl: true },
     });
 
     // AudioContext at the target sample rate — Chrome/Firefox resample for us.

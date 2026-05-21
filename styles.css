@@ -832,6 +832,23 @@ input, textarea, select { font-family: inherit; }
   margin: 0 2px;
 }
 
+/* ---------- Custom tooltip ---------- */
+.app-tooltip {
+  position: fixed;
+  z-index: 300;
+  background: var(--hf-gray-900);
+  color: var(--fg-inverse);
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  line-height: 1.6;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  white-space: pre-line;
+  max-width: 260px;
+}
+
 @media (max-width: 640px) {
   .controls { flex-wrap: wrap; }
   .vu { order: 3; flex-basis: 100%; }

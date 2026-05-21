@@ -31,22 +31,26 @@ const DEFAULT_SETTINGS = {
   llmUrl: 'http://localhost:8080/v1/chat/completions',
   llmModel: 'local',
   apiKey: '',
+  echoCancellation: true,
   chunkSeconds: 10,
   chunkOverlapMs: 1000,
   windowChunks: 2,           // audio window: chunks sent as audio in each call
-  recapWindow: 8,            // recap window: prior chunks whose bullets/transcripts are sent as text context
+  textChunks: 3,             // text context: prior transcripts sent as plain text before the audio window
+  recapWindow: 3,            // recap snapshots: older chunks included as compact bullet context
   maxRecapBullets: 5,        // hard cap on the recap's bullet count — prompt asks the model to compress when exceeded
   recapLanguage: 'English',
   systemPrompt:
     "⚠ HARD LIMIT: the recap must contain AT MOST {{MAX_BULLETS}} bullets at all " +
-    "times. Exceeding this is a FAILURE. The count INCLUDES bold bullets. " +
-    "Re-check the count before you emit each output.\n\n" +
+    "times. Exceeding this is a FAILURE. The count INCLUDES bold bullets.\n\n" +
     "You maintain a concise running recap of a live talk for someone following " +
     "a foreign-language speaker. Each turn you receive the latest ~10 s of " +
     "audio (may overlap the previous chunk by a few hundred ms) and the prior " +
     "recap as text.\n\n" +
+    "⚠ TRANSCRIPTION RULE: transcribe ONLY the LAST audio clip — the one " +
+    "attached to this message. Earlier clips already have transcripts; do NOT " +
+    "re-transcribe them.\n\n" +
     "Output format:\n" +
-    "<verbatim transcript of the new audio in the source language; " +
+    "<verbatim transcript of the LAST audio clip in the source language; " +
     "[silence] if non-speech>\n" +
     RECAP_MARKER + "\n" +
     "<the updated recap, in {{LANG}}, ≤ {{MAX_BULLETS}} bullets>\n\n" +
@@ -54,31 +58,25 @@ const DEFAULT_SETTINGS = {
     "and ADD — do not simply copy the prior recap.\n\n" +
     "• DROP — aggressively. When the prior recap is at or near the cap, you " +
     "MUST keep AT MOST HALF of the prior NON-BOLD bullets. Drop bullets that " +
-    "are no longer the most relevant, that have been superseded by later " +
-    "information, or that are minor details. **Bold** bullets are PINNED: " +
-    "never drop them, only shorten their wording if needed.\n" +
+    "are no longer the most relevant, superseded, or minor details. **Bold** " +
+    "bullets are PINNED: never drop them, only shorten their wording if needed.\n" +
     "• UPDATE — refine bullets when the new audio adds detail, nuance, or " +
-    "correction. Merge any pair of related bullets into one denser bullet. " +
-    "Deduplicate.\n" +
+    "correction. Prior recap bullets may contain transcription mistakes — " +
+    "correct them if the new audio clarifies. Merge related bullets. Deduplicate.\n" +
     "• ADD — include 0–3 new bullets from the latest audio. If adding would " +
     "exceed the cap, drop existing non-bold bullets to make room.\n\n" +
     "Bullet quality:\n" +
     "• Each bullet is one substantive, self-contained idea.\n" +
     "• Preserve concrete numbers, names, definitions, terms, quotes.\n" +
-    "• NO meta-commentary (\"the speaker mentions…\", \"the speaker also discusses…\", " +
-    "\"the speaker references…\"). State the content directly.\n" +
-    "• For the 1–2 most important takeaways, wrap the bullet (or its key " +
-    "phrase) in **double-asterisks**. Sparingly.\n" +
+    "• NO meta-commentary (\"the speaker mentions…\", \"the speaker also discusses…\"). State the content directly.\n" +
+    "• Bold (**text**): at most HALF of all bullets. Most bullets must stay plain. Bold = truly exceptional only.\n" +
     "• Bullets in {{LANG}}, '- '-prefixed, one per line.\n\n" +
-    "GOOD bullet (merged, substantive):\n" +
-    "- **Method X cuts inference latency 3.2× vs baseline; 1.4-pt accuracy drop recoverable in ~200 fine-tuning steps.**\n\n" +
-    "BAD (NEVER — fragmented, meta, vague):\n" +
-    "- The speaker mentions method X.\n" +
-    "- This method is faster.\n" +
-    "- The speaker also discusses accuracy.\n\n" +
-    "⚠ FINAL CHECK before you finish: count your bullets. If > {{MAX_BULLETS}}, " +
-    "go back and DROP non-bold bullets until you are at or under the cap. " +
-    "Hard limit: {{MAX_BULLETS}}.",
+    "GOOD bullet: - **Method X cuts inference latency 3.2× vs baseline; 1.4-pt accuracy drop recoverable in ~200 fine-tuning steps.**\n" +
+    "BAD (NEVER): - The speaker mentions method X. / - This method is faster.\n\n" +
+    "⚠ FINAL CHECK: (1) bullets > {{MAX_BULLETS}}? DROP non-bold until at cap. " +
+    "(2) bold > half? Un-bold the least critical until bold ≤ half.",
+  temperature: 0.2,
+  topK: 20,
   mockMode: false,
 };
 
@@ -172,6 +170,7 @@ createApp({
     let timerInterval = null;
     let mockTimer = null;
     let mockIndex = 0;
+    let _llmChain = Promise.resolve();              // serialises LLM calls — prevents concurrent pile-up
 
     // ---------- Time helpers ----------
     function formatTime(ms) {
@@ -242,6 +241,7 @@ createApp({
         const loaded = await DB.getChunks(latest.id);
         chunks.push(...loaded.map(c => ({
           ...c,
+          llmDurationMs: c.llmDurationMs ?? null,
           status: c.status === 'streaming' || c.status === 'pending' ? 'done' : (c.status || 'done'),
           bullets: Array.isArray(c.bullets) ? c.bullets : [],
         })));
@@ -337,6 +337,7 @@ createApp({
         capture = null;
       }
       audioLevel.value = 0;
+      _llmChain = Promise.resolve();
     }
 
     // ---------- Continuous audio capture ----------
@@ -345,6 +346,7 @@ createApp({
         sampleRate: SAMPLE_RATE,
         chunkSeconds: Math.max(1, Number(settings.chunkSeconds) || 10),
         overlapMs: Math.max(0, Number(settings.chunkOverlapMs) || 0),
+        echoCancellation: !!settings.echoCancellation,
         onChunk: (pcm, sampleRate, durationMs) => {
           // Don't await: capture keeps accumulating regardless of API speed.
           processPcmChunk(pcm, sampleRate, durationMs);
@@ -397,6 +399,7 @@ createApp({
         audioMime: 'audio/wav',
         audioBlob: wavBlob,
         durationMs,
+        llmDurationMs: null,
         createdAt: Date.now(),
       });
       chunks.push(chunk);
@@ -406,6 +409,13 @@ createApp({
       // Persist immediately so the audio survives even if the API fails
       try { await DB.putChunk(toPlain(chunk)); } catch (e) { console.warn('putChunk', e); }
 
+      // Serialize onto the chain: prevents concurrent LLM pile-up that causes
+      // progressive delay when the backend is slower than the chunk interval.
+      _llmChain = _llmChain.then(() => runLLM(chunk));
+    }
+
+    async function runLLM(chunk) {
+      const t0 = Date.now();
       try {
         await callLLM(chunk);
         chunk.status = 'done';
@@ -414,6 +424,7 @@ createApp({
         if (!chunk.transcript) chunk.transcript = `[error: ${e.message}]`;
         error.value = `Recap failed: ${e.message}`;
       } finally {
+        chunk.llmDurationMs = Date.now() - t0;
         chunk.bullets = (chunk.bullets || []).map(b => (b || '').trim()).filter(Boolean);
         try { await DB.putChunk(toPlain(chunk)); } catch (e) { console.warn('putChunk', e); }
       }
@@ -427,7 +438,8 @@ createApp({
         bullets: [...chunk.bullets],
         status: chunk.status,
         audioMime: chunk.audioMime, audioBlob: chunk.audioBlob,
-        durationMs: chunk.durationMs, createdAt: chunk.createdAt,
+        durationMs: chunk.durationMs, llmDurationMs: chunk.llmDurationMs,
+        createdAt: chunk.createdAt,
       };
     }
 
@@ -444,18 +456,21 @@ createApp({
     //     the canonical recap lives in the final user turn instead),
     //   • the running recap as plain text (the bullets of the most recent
     //     non-streaming chunk — i.e. the recap-as-of-now),
-    //   • older prior transcripts (chunks within recap window but outside
-    //     audio window) as plain text grounding,
+    //   • older prior transcripts (textChunks) as plain text grounding,
+    //   • even older recap bullet snapshots (recapWindow) as compact context,
     //   • the latest audio chunk.
     // The model returns the *complete updated recap*.
     async function callLLM(latestChunk) {
-      const N = Math.max(1, Number(settings.windowChunks) || 3);
-      const M = Math.max(N, Number(settings.recapWindow) || N);
-      const auWindow = chunks.slice(-N);
-      const priorAudio = auWindow.slice(0, -1);
+      const N = Math.max(1, Number(settings.windowChunks) || 2);
+      const T = Math.max(0, Number(settings.textChunks) || 3);
+      const R = Math.max(0, Number(settings.recapWindow) || 3);
       const auStart = Math.max(0, chunks.length - N);
-      const txStart = Math.max(0, chunks.length - M);
+      const txStart = Math.max(0, auStart - T);
+      const rcStart = Math.max(0, txStart - R);
+      const auWindow = chunks.slice(auStart);
+      const priorAudio = auWindow.slice(0, -1);
       const textOnlyPrior = chunks.slice(txStart, auStart);
+      const recapOnlyPrior = chunks.slice(rcStart, txStart);
 
       // Running recap = bullets of the most recent prior chunk that has any.
       let priorRecap = [];
@@ -466,60 +481,60 @@ createApp({
       const sys = settings.systemPrompt
         .replace(/\{\{LANG\}\}/g, settings.recapLanguage)
         .replace(/\{\{MAX_BULLETS\}\}/g, String(settings.maxRecapBullets || 10));
-      const messages = [{ role: 'system', content: sys }];
+
+      const content = [];
+      content.push({ type: 'text', text: sys + '\n\n' });
+
+      if (contextPrompt.value) {
+        content.push({ type: 'text', text: `Talk context (user-provided): ${contextPrompt.value}\n\n` });
+      }
+
+      if (recapOnlyPrior.length) {
+        let t = `Earlier recap snapshots (oldest → newest, compact context):\n`;
+        for (const c of recapOnlyPrior) {
+          if (c.bullets && c.bullets.length) {
+            t += `[${formatTime(c.time)}] ${c.bullets.map(b => `- ${b}`).join(' | ')}\n`;
+          }
+        }
+        content.push({ type: 'text', text: t + '\n' });
+      }
+
+      if (textOnlyPrior.length) {
+        let t = `Earlier transcripts (text only — no audio for these):\n`;
+        for (const c of textOnlyPrior) {
+          t += `[${formatTime(c.time)}] ${(c.transcript || '[silence]').replace(/\s+/g, ' ').trim()}\n`;
+        }
+        content.push({ type: 'text', text: t + '\n' });
+      }
 
       for (const c of priorAudio) {
         const b64 = audioCache.get(c.id);
-        const audioPart = b64 ? [{ type: 'input_audio', input_audio: { data: b64, format: 'wav' } }] : [];
-        messages.push({
-          role: 'user',
-          content: [{ type: 'text', text: 'Prior audio segment.' }, ...audioPart],
-        });
-        // Send only the transcript in the assistant turn; the canonical recap
-        // is delivered in the final user turn below so the model doesn't think
-        // it has to reproduce per-chunk bullets.
-        messages.push({ role: 'assistant', content: c.transcript || '[silence]' });
+        content.push({ type: 'text', text: `Past audio segment (already transcribed): transcript = "${c.transcript || '[silence]'}"` });
+        if (b64) content.push({ type: 'input_audio', input_audio: { data: b64, format: 'wav' } });
+        content.push({ type: 'text', text: '\n' });
       }
 
       if (priorAudio.length > 0) {
-        messages.push({
-          role: 'user',
-          content: 'Above are past audio segments. Below is the new audio with a small overlap:',
-        });
-        messages.push({ role: 'assistant', content: 'Understood.' });
+        content.push({ type: 'text', text: 'Above are past audio segments. Below is the NEW audio with a small overlap:\n\n' });
       }
 
-      let userText = '';
-      if (contextPrompt.value) userText += `Talk context (user-provided): ${contextPrompt.value}\n\n`;
-      if (textOnlyPrior.length) {
-        userText += `Earlier transcripts (text only — no audio for these):\n`;
-        for (const c of textOnlyPrior) {
-          const t = (c.transcript || '[silence]').replace(/\s+/g, ' ').trim();
-          userText += `[${formatTime(c.time)}] ${t}\n`;
-        }
-        userText += `\n`;
-      }
       const maxBullets = Math.max(3, Number(settings.maxRecapBullets) || 10);
       const priorCount = priorRecap.length;
       const nearCap = priorCount >= Math.ceil(maxBullets * 0.7);
       const recapHeader = priorCount
         ? `Current recap (${priorCount}/${maxBullets} bullets${nearCap ? ' — NEAR/AT CAP, prune aggressively before adding' : ''}):`
         : 'Current recap: (none yet)';
-      userText += priorCount
+      const recapText = priorCount
         ? `${recapHeader}\n${priorRecap.map(b => `- ${b}`).join('\n')}\n\n`
         : `${recapHeader}\n\n`;
-      userText += `Latest audio segment follows. Output the verbatim transcript, then ${RECAP_MARKER} on its own line, then the updated recap in ${settings.recapLanguage}. Hard limit: ≤ ${maxBullets} bullets. DROP non-bold bullets aggressively before adding new ones. Never drop **bold** bullets.`;
+      content.push({ type: 'text', text: recapText });
+
+      content.push({ type: 'text', text: `Transcribe ONLY the audio below (it is the NEW segment, not yet transcribed). Then output ${RECAP_MARKER} on its own line, then the updated recap in ${settings.recapLanguage}. Hard limit: ≤ ${maxBullets} bullets. DROP non-bold bullets aggressively before adding new ones. Never drop **bold** bullets.\n` });
 
       const latestB64 = audioCache.get(latestChunk.id);
-      messages.push({
-        role: 'user',
-        content: [
-          { type: 'text', text: userText },
-          ...(latestB64 ? [{ type: 'input_audio', input_audio: { data: latestB64, format: 'wav' } }] : []),
-        ],
-      });
+      if (latestB64) content.push({ type: 'input_audio', input_audio: { data: latestB64, format: 'wav' } });
 
-      await streamChat({ messages, stream: true }, makeStreamHandler(latestChunk));
+      await streamChat({ messages: [{ role: 'user', content }], stream: true }, makeStreamHandler(latestChunk));
     }
 
     async function streamChat(payload, onDelta) {
@@ -527,7 +542,8 @@ createApp({
       if (settings.apiKey) headers['Authorization'] = `Bearer ${settings.apiKey}`;
       const body = JSON.stringify({
         model: settings.llmModel || 'local',
-        temperature: 0.2,
+        temperature: Number(settings.temperature) ?? 0.2,
+        top_k: Number(settings.topK) || 20,
         ...payload,
       });
       const res = await fetch(settings.llmUrl, { method: 'POST', headers, body });
@@ -830,6 +846,26 @@ createApp({
       return { transform: `scaleY(${scaled.toFixed(3)})` };
     }
 
+    // ---------- Custom tooltip ----------
+    const tooltip = reactive({ visible: false, text: '', x: 0, y: 0 });
+    function showTooltip(e, text) {
+      tooltip.text = text;
+      tooltip.x = e.clientX + 14;
+      tooltip.y = e.clientY + 18;
+      tooltip.visible = true;
+    }
+    function moveTooltip(e) {
+      if (!tooltip.visible) return;
+      tooltip.x = e.clientX + 14;
+      tooltip.y = e.clientY + 18;
+    }
+    function hideTooltip() { tooltip.visible = false; }
+    function chunkTooltipText(chunk) {
+      let text = formatWallTime(chunk.createdAt);
+      if (chunk.llmDurationMs != null) text += `\nLLM: ${(chunk.llmDurationMs / 1000).toFixed(1)}s`;
+      return text;
+    }
+
     // ---------- Mini-markdown for bullets ----------
     // Supports **bold** only. Returns an array of segments for the template
     // to render as either <strong> or plain text (no v-html, so no XSS risk).
@@ -867,6 +903,7 @@ createApp({
       resetSettings, resetSystemPrompt, flashToast,
       // helpers
       formatTime, formatWallTime, vuBarStyle, renderBullet,
+      tooltip, showTooltip, moveTooltip, hideTooltip, chunkTooltipText,
     };
   },
   template: '#app-template',
