@@ -1,0 +1,7 @@
+{
+  "name": "llamacpp-realtime-voice",
+  "version": "1.0.0",
+  "scripts": {
+    "serve": "npx serve ."
+  }
+}

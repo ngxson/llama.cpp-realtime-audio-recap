@@ -40,41 +40,19 @@ const DEFAULT_SETTINGS = {
   maxRecapBullets: 5,        // hard cap on the recap's bullet count — prompt asks the model to compress when exceeded
   recapLanguage: 'English',
   systemPrompt:
-    "⚠ HARD LIMIT: the recap must contain AT MOST {{MAX_BULLETS}} bullets at all " +
-    "times. Exceeding this is a FAILURE. The count INCLUDES bold bullets.\n\n" +
-    "You maintain a concise running recap of a live talk for someone following " +
-    "a foreign-language speaker. Each turn you receive the latest ~10 s of " +
-    "audio (may overlap the previous chunk by a few hundred ms) and the prior " +
-    "recap as text.\n\n" +
-    "⚠ TRANSCRIPTION RULE: transcribe ONLY the LAST audio clip — the one " +
-    "attached to this message. Earlier clips already have transcripts; do NOT " +
-    "re-transcribe them.\n\n" +
+    "You maintain a running recap of a live talk for someone following a foreign-language speaker.\n\n" +
+    "Transcribe ONLY the last audio clip (attached to this message). Earlier clips already have transcripts.\n\n" +
+    "Audio chunks are fixed-length slices of a live stream, so the first/last word of any clip may be chopped. Earlier transcripts may be incomplete at their boundaries — that is expected.\n\n" +
     "Output format:\n" +
-    "<verbatim transcript of the LAST audio clip in the source language; " +
-    "[silence] if non-speech>\n" +
+    "<verbatim transcript in the source language; [silence] if non-speech>\n" +
     RECAP_MARKER + "\n" +
-    "<the updated recap, in {{LANG}}, ≤ {{MAX_BULLETS}} bullets>\n\n" +
-    "EDIT, DON'T REWRITE. You are a strict editor. Each turn you DROP, UPDATE, " +
-    "and ADD — do not simply copy the prior recap.\n\n" +
-    "• DROP — aggressively. When the prior recap is at or near the cap, you " +
-    "MUST keep AT MOST HALF of the prior NON-BOLD bullets. Drop bullets that " +
-    "are no longer the most relevant, superseded, or minor details. **Bold** " +
-    "bullets are PINNED: never drop them, only shorten their wording if needed.\n" +
-    "• UPDATE — refine bullets when the new audio adds detail, nuance, or " +
-    "correction. Prior recap bullets may contain transcription mistakes — " +
-    "correct them if the new audio clarifies. Merge related bullets. Deduplicate.\n" +
-    "• ADD — include 0–3 new bullets from the latest audio. If adding would " +
-    "exceed the cap, drop existing non-bold bullets to make room.\n\n" +
-    "Bullet quality:\n" +
-    "• Each bullet is one substantive, self-contained idea.\n" +
-    "• Preserve concrete numbers, names, definitions, terms, quotes.\n" +
-    "• NO meta-commentary (\"the speaker mentions…\", \"the speaker also discusses…\"). State the content directly.\n" +
-    "• Bold (**text**): at most HALF of all bullets. Most bullets must stay plain. Bold = truly exceptional only.\n" +
-    "• Bullets in {{LANG}}, '- '-prefixed, one per line.\n\n" +
-    "GOOD bullet: - **Method X cuts inference latency 3.2× vs baseline; 1.4-pt accuracy drop recoverable in ~200 fine-tuning steps.**\n" +
-    "BAD (NEVER): - The speaker mentions method X. / - This method is faster.\n\n" +
-    "⚠ FINAL CHECK: (1) bullets > {{MAX_BULLETS}}? DROP non-bold until at cap. " +
-    "(2) bold > half? Un-bold the least critical until bold ≤ half.",
+    "<updated recap in {{LANG}}, ≤ {{MAX_BULLETS}} bullets, '- '-prefixed>\n\n" +
+    "Recap rules:\n" +
+    "• Max {{MAX_BULLETS}} bullets. Aim for 2–3. Only use more if the content truly warrants it. Aggressively drop minor, redundant, or superseded bullets.\n" +
+    "• If the latest audio ends mid-sentence or is unclear, still transcribe what you hear, but you may leave the recap unchanged rather than adding speculative bullets.\n" +
+    "• No meta-commentary. State content directly. Preserve numbers, names, quotes.\n" +
+    "• Use **bold** only for truly important information.\n" +
+    "• Every turn MUST change at least 1 bullet — never output the identical recap as before. If nothing new happened, compress or merge existing bullets.",
   temperature: 0.2,
   topK: 20,
   mockMode: false,
@@ -519,13 +497,25 @@ createApp({
       }
 
       const maxBullets = Math.max(3, Number(settings.maxRecapBullets) || 10);
-      const priorCount = priorRecap.length;
-      const nearCap = priorCount >= Math.ceil(maxBullets * 0.7);
+
+      // Filter out bullets that have appeared unchanged in more than 5 consecutive chunks
+      const filteredRecap = priorRecap.filter(b => {
+        const norm = b.trim().toLowerCase();
+        let streak = 0;
+        for (let i = chunks.length - 2; i >= 0; i--) {
+          if ((chunks[i].bullets || []).some(x => x.trim().toLowerCase() === norm)) streak++;
+          else break;
+        }
+        return streak <= 5;
+      });
+      const dropped = priorRecap.length - filteredRecap.length;
+
+      const priorCount = filteredRecap.length;
       const recapHeader = priorCount
-        ? `Current recap (${priorCount}/${maxBullets} bullets${nearCap ? ' — NEAR/AT CAP, prune aggressively before adding' : ''}):`
+        ? `Current recap (${priorCount}/${maxBullets} bullets${dropped ? ` — ${dropped} stale bullet(s) removed, do not re-add them` : ''}):`
         : 'Current recap: (none yet)';
       const recapText = priorCount
-        ? `${recapHeader}\n${priorRecap.map(b => `- ${b}`).join('\n')}\n\n`
+        ? `${recapHeader}\n${filteredRecap.map(b => `- ${b}`).join('\n')}\n\n`
         : `${recapHeader}\n\n`;
       content.push({ type: 'text', text: recapText });
 
@@ -534,19 +524,27 @@ createApp({
       const latestB64 = audioCache.get(latestChunk.id);
       if (latestB64) content.push({ type: 'input_audio', input_audio: { data: latestB64, format: 'wav' } });
 
-      await streamChat({ messages: [{ role: 'user', content }], stream: true }, makeStreamHandler(latestChunk));
+      const abortCtrl = new AbortController();
+      await streamChat({ messages: [{ role: 'user', content }], stream: true }, makeStreamHandler(latestChunk, () => abortCtrl.abort()), abortCtrl.signal);
     }
 
-    async function streamChat(payload, onDelta) {
+    async function streamChat(payload, onDelta, signal) {
       const headers = { 'Content-Type': 'application/json' };
       if (settings.apiKey) headers['Authorization'] = `Bearer ${settings.apiKey}`;
       const body = JSON.stringify({
         model: settings.llmModel || 'local',
         temperature: Number(settings.temperature) ?? 0.2,
         top_k: Number(settings.topK) || 20,
+        max_tokens: 500,
         ...payload,
       });
-      const res = await fetch(settings.llmUrl, { method: 'POST', headers, body });
+      let res;
+      try {
+        res = await fetch(settings.llmUrl, { method: 'POST', headers, body, signal });
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+        throw e;
+      }
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         throw new Error(`LLM ${res.status}${text ? ': ' + text.slice(0, 200) : ''}`);
@@ -554,33 +552,51 @@ createApp({
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        for (const raw of lines) {
-          const line = raw.trim();
-          if (!line || !line.startsWith('data:')) continue;
-          const data = line.slice(5).trim();
-          if (data === '[DONE]') return;
-          try {
-            const j = JSON.parse(data);
-            const delta = j.choices?.[0]?.delta?.content ?? j.choices?.[0]?.message?.content ?? '';
-            if (delta) onDelta(delta);
-          } catch { /* ignore */ }
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const raw of lines) {
+            const line = raw.trim();
+            if (!line || !line.startsWith('data:')) continue;
+            const data = line.slice(5).trim();
+            if (data === '[DONE]') return;
+            try {
+              const j = JSON.parse(data);
+              const delta = j.choices?.[0]?.delta?.content ?? j.choices?.[0]?.message?.content ?? '';
+              if (delta) onDelta(delta);
+            } catch { /* ignore */ }
+          }
         }
+      } catch (e) {
+        if (e.name !== 'AbortError') throw e;
       }
     }
 
     // ---------- Stream parser ----------
-    function makeStreamHandler(chunk) {
+    function makeStreamHandler(chunk, abortFn = () => {}) {
       let phase = 'transcript';
       let transcriptBuf = '';
       let recapBuf = '';
+      let fullText = '';
       const M = RECAP_MARKER;
       return function onDelta(delta) {
+        // Repetition guard: abort if the same word repeats > 10 times in a row
+        fullText += delta;
+        const words = fullText.split(/\s+/).filter(Boolean);
+        if (words.length > 10) {
+          const last = words[words.length - 1].toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+          let streak = 0;
+          for (let i = words.length - 1; i >= 0; i--) {
+            if (words[i].toLowerCase().replace(/[^\p{L}\p{N}]/gu, '') === last) streak++;
+            else break;
+          }
+          if (streak > 10) { abortFn(); return; }
+        }
+
         if (phase === 'transcript') {
           transcriptBuf += delta;
           const ix = transcriptBuf.indexOf(M);
@@ -846,6 +862,86 @@ createApp({
       return { transform: `scaleY(${scaled.toFixed(3)})` };
     }
 
+    // ---------- Audio file upload (debug) ----------
+    function triggerAudioUpload() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'audio/*';
+      input.onchange = handleAudioUpload;
+      input.click();
+    }
+
+    async function handleAudioUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      error.value = '';
+      try {
+        if (!currentSession.value) {
+          currentSession.value = await DB.createSession(currentProjectId.value, { contextPrompt: contextPrompt.value });
+        }
+
+        // Decode to PCM at target sample rate (browser resamples for us)
+        const arrayBuffer = await file.arrayBuffer();
+        const audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+        let audioBuffer;
+        try { audioBuffer = await audioCtx.decodeAudioData(arrayBuffer); }
+        finally { await audioCtx.close(); }
+
+        // Downmix to mono
+        const pcm = new Float32Array(audioBuffer.length);
+        for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+          const channelData = audioBuffer.getChannelData(ch);
+          for (let i = 0; i < pcm.length; i++) pcm[i] += channelData[i] / audioBuffer.numberOfChannels;
+        }
+
+        // Set session timer from last chunk so timestamps continue correctly
+        const last = chunks[chunks.length - 1];
+        const cumulative = last ? (last.time + (last.durationMs || settings.chunkSeconds * 1000)) : 0;
+        sessionStart.value = Date.now() - cumulative;
+
+        // Slice into chunks and process strictly one at a time (await each LLM call)
+        const chunkSamples = SAMPLE_RATE * Math.max(1, settings.chunkSeconds);
+        const overlapSamples = Math.min(
+          Math.max(0, Math.floor((settings.chunkOverlapMs / 1000) * SAMPLE_RATE)),
+          chunkSamples - 1
+        );
+        const stride = chunkSamples - overlapSamples;
+        let offset = 0;
+        let count = 0;
+        while (offset < pcm.length) {
+          const slice = pcm.slice(offset, offset + chunkSamples);
+          if (slice.length < SAMPLE_RATE * 0.5) break; // skip < 0.5 s trailing sliver
+          const durationMs = (slice.length / SAMPLE_RATE) * 1000;
+
+          // Build and persist the chunk (same as processPcmChunk, but awaited fully)
+          const wavBuf = AudioUtils.encodeWAV(slice, SAMPLE_RATE);
+          const wavBlob = new Blob([wavBuf], { type: 'audio/wav' });
+          const b64 = AudioUtils.arrayBufferToBase64(wavBuf);
+          const chunk = reactive({
+            id: DB.uuid(), sessionId: currentSession.value.id,
+            projectId: currentSession.value.projectId,
+            idx: chunks.length, time: Date.now() - sessionStart.value,
+            transcript: '', bullets: [], status: 'streaming',
+            audioMime: 'audio/wav', audioBlob: wavBlob,
+            durationMs, llmDurationMs: null, createdAt: Date.now(),
+          });
+          chunks.push(chunk);
+          audioCache.set(chunk.id, b64);
+          trimAudioCache();
+          try { await DB.putChunk(toPlain(chunk)); } catch (e) { console.warn('putChunk', e); }
+
+          // Run LLM synchronously — wait for it to finish before next chunk
+          await runLLM(chunk);
+
+          offset += stride;
+          count++;
+        }
+        flashToast(`Processed ${count} chunk${count !== 1 ? 's' : ''} from ${file.name}`);
+      } catch (e) {
+        error.value = `Upload failed: ${e.message}`;
+      }
+    }
+
     // ---------- Custom tooltip ----------
     const tooltip = reactive({ visible: false, text: '', x: 0, y: 0 });
     function showTooltip(e, text) {
@@ -900,7 +996,7 @@ createApp({
       recapBodyRef, transcriptBodyRef,
       // actions
       toggleRecording, newSession, copyRecap, copyTranscript, saveMarkdown, saveAudio,
-      resetSettings, resetSystemPrompt, flashToast,
+      resetSettings, resetSystemPrompt, flashToast, triggerAudioUpload,
       // helpers
       formatTime, formatWallTime, vuBarStyle, renderBullet,
       tooltip, showTooltip, moveTooltip, hideTooltip, chunkTooltipText,
